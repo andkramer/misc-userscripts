@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Key Auto Redeem
-// @version      1.0.1
-// @license      GPLv3
+// @version      1.0.2
+// @license      GPL-3.0
 // @namespace    https://github.com/andkramer
 // @run-at       document-idle
 // @description  Automatically Accepts Steam Subscriber Agreement and Registers Product Key, Closes Tab after that happend successfully, keeps it open if an error occurs
