@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Steam Key Auto Redeem
-// @version      1.0
+// @version      1.0.1
 // @license      GPLv3
 // @namespace    https://github.com/andkramer
 // @run-at       document-idle
