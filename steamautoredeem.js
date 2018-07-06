@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name         Steam Key Auto Redeem
 // @version      1.0
+// @license      GPLv3
 // @namespace    https://github.com/andkramer
 // @run-at       document-idle
 // @description  Automatically Accepts Steam Subscriber Agreement and Registers Product Key, Closes Tab after that happend successfully, keeps it open if an error occurs
 // @author       Andre Kramer (akramer@codingbros.io)
 // @match        https://store.steampowered.com/account/registerkey?key=*
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/andkramer/steamautoredeem/master/steamautoredeem.js
-// @downloadURL  https://raw.githubusercontent.com/andkramer/steamautoredeem/master/steamautoredeem.js
+// @updateURL    https://raw.githubusercontent.com/andkramer/misc-userscripts/master/steamautoredeem.js
+// @downloadURL  https://raw.githubusercontent.com/andkramer/misc-userscripts/master/steamautoredeem.js
 // ==/UserScript==
 
 var observer = new MutationObserver(closeTab);
