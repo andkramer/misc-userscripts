@@ -17,7 +17,6 @@ var observer = new MutationObserver(closeTab);
 function closeTab(changes, observer) {
     if(document.querySelector('#receipt_form')) {
         if(document.getElementById("receipt_form").style.display != "none") {
-            console.log("Registration done!");
             observer.disconnect();
             window.close();
         }
