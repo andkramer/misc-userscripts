@@ -13,7 +13,7 @@
 // @downloadURL  https://raw.githubusercontent.com/andkramer/misc-userscripts/master/seismicrostergodmode.user.js
 // ==/UserScript==
 
-var loadRegionsBtn = $("<span class=\"btn btn-s btn-default-alt btn-block\">Load Regions</span>");
+var forceReloadRegionsBtn = $("<span class=\"btn btn-s btn-default-alt btn-block\">Force Reload Regions</span>");
 var hideActiveBtn = $("<span class=\"btn btn-xs btn-default-alt btn-block\">Only Inactive</span>");
 var showActiveBtn = $("<span class=\"btn btn-xs btn-default-alt btn-block\">All Members</span>");
 var godModePanel = $("<div class=\"gm-panel\"></div>");
@@ -27,9 +27,11 @@ var ocIcon64 = "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz
 // var emptyRow = $("<div class=\"gm-row row\"></div>");
 var onlyInactive = false;
 
+var regionMap;
+
 function isInactive(lastSeen) {
-  var inactiveRegex = /.*(weeks|month|Never).*/g
-  return inactiveRegex.test(lastSeen)
+    var inactiveRegex = /.*(weeks|month|Never).*/g
+    return inactiveRegex.test(lastSeen)
 }
 
 async function hideActiveMembers() {
@@ -70,7 +72,13 @@ function updateTableView(hideActive) {
     })
 }
 
-function loadRegions() {
+function forceReloadRegions() {
+    loadRegions(true);
+}
+
+function loadRegions(forceReload) {
+    console.log("Loading regions");
+    var xhrs = [];
     $(".alc-event-results-table > tbody > tr").each(function(i, data) {
         var row = $(this);
         if (row.children().length > 3) {
@@ -78,28 +86,47 @@ function loadRegions() {
             var profUrl = profileColumn.children().first().attr("href");
             var urlRegex = /.*(\/profile\/.*)/g;
             var relativeUrl = urlRegex.exec(profUrl)[1];
-            $.ajax({
-                url: relativeUrl,
-                context: document.body,
-            }).done(function(data) {
-                var regex = /<span class=\"team-info__label\">Region:<\/span>\s*<span class="team-info__value ">(.*)<\/span>/g;
-                var match = regex.exec(data);
+            if(regionMap[relativeUrl] == undefined || forceReload) {
+                var xhr = $.ajax({
+                    url: relativeUrl,
+                    context: document.body,
+                }).done(function(data) {
+                    var regex = /<span class=\"team-info__label\">Region:<\/span>\s*<span class="team-info__value ">(.*)<\/span>/g;
+                    var match = regex.exec(data);
+                    var regionColumn = row.children().eq(1);
+                    var region = match[1];
+                    regionMap[relativeUrl] = region;
+                    updateRegionCell(regionColumn, region);
+                });
+                xhrs.push(xhr);
+            } else {
                 var regionColumn = row.children().eq(1);
-                if(match[1] == "EU") {
-                    var iconEu = $('<img height = "1em">').attr('title', match[1]).attr('src', euIcon64).css("height","30px");
-                    regionColumn.append(iconEu);
-                } else if (match[1] == "NA") {
-                    var iconNa = $('<img height = "1em">').attr('title', match[1]).attr('src', naIcon64).css("height","30px");
-                    regionColumn.append(iconNa);
-                } else if (match[1] == "OC") {
-                    var iconOc = $('<img height = "1em">').attr('title', match[1]).attr('src', ocIcon64).css("height","30px");
-                    regionColumn.append(iconOc);
-                } else {
-                    regionColumn.html(match[1]);
-                }
-            });
+                var region = regionMap[relativeUrl];
+                updateRegionCell(regionColumn, region);
+            }
+            if(xhrs.length > 0) {
+                $.when.apply($, xhrs).done(saveRegionCache);
+            }
         }
     })
+}
+
+function updateRegionCell(regionColumn, region){
+    if(region == "EU") {
+        var iconEu = $('<img height = "1em">').attr('title', region).attr('src', euIcon64).css("height","30px");
+        regionColumn.empty();
+        regionColumn.append(iconEu);
+    } else if (region == "NA") {
+        var iconNa = $('<img height = "1em">').attr('title', region).attr('src', naIcon64).css("height","30px");
+        regionColumn.empty();
+        regionColumn.append(iconNa);
+    } else if (region == "OC") {
+        var iconOc = $('<img height = "1em">').attr('title', region).attr('src', ocIcon64).css("height","30px");
+        regionColumn.empty();
+        regionColumn.append(iconOc);
+    } else {
+        regionColumn.html(region);
+    }
 }
 
 function updateHideActiveButton(){
@@ -117,12 +144,12 @@ function addGodModePanel() {
     var headline = $(".card__header");
     var divName = headline.html();
     //
-    loadRegionsBtn.on("click",loadRegions);
+    forceReloadRegionsBtn.on("click",forceReloadRegions);
     hideActiveBtn.on("click",hideActiveMembers);
     showActiveBtn.on("click",showActiveMembers);
     //
     headlineRow.find(".gm-divname").append(divName);
-    headlineRow.find(".gm-load-regions").append(loadRegionsBtn);
+    //headlineRow.find(".gm-load-regions").append(forceReloadRegionsBtn);
     //
     utilityRow.find(".gm-hide-active").append(hideActiveBtn);
     utilityRow.find(".gm-hide-active").append(showActiveBtn);
@@ -133,9 +160,23 @@ function addGodModePanel() {
     headline.empty();
     headline.html(godModePanel);
 }
+async function retrieveRegionCache(){
+    let cache = await GM.getValue("gm-region-map","{}");
+    regionMap = await JSON.parse(cache)
+    console.log("Loaded region cache with " + Object.keys(regionMap).length + " entries");
+}
+
+async function saveRegionCache() {
+    await GM.setValue("gm-region-map", JSON.stringify(regionMap));
+}
+
 
 (async function() {
     onlyInactive = await GM.getValue("gm-only-inactive");
-    addGodModePanel();
-    initView();
+
+    retrieveRegionCache().then(x => {
+        loadRegions(false);
+        addGodModePanel();
+        initView();
+    });
 })();
