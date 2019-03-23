@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Seismic Roster Godmode
-// @version      0.0.2
+// @version      0.0.3
 // @license      GPL-3.0
 // @namespace    https://github.com/andkramer
 // @run-at       document-idle
@@ -14,8 +14,8 @@
 
 var $ = window.jQuery;
 
-var loadRegionsBtn = "<a style=\"width:154px\" href=\"#\"  class=\"btn btn-xs btn-default-alt btn-block\">Load Regions</a>";
-var godModePanel = "<div class=\"gm-panel row\"><div class=\"gm-divname col-sm-9\"></div><div class=\"gm-load-regions col-sm-3\"></div></div>"
+var loadRegionsBtn = "<a href=\"#\"  class=\"btn btn-xs btn-default-alt btn-block\">Load Regions</a>";
+var godModePanel = "<div class=\"gm-panel row\"><div class=\"gm-divname col-sm-10\"></div><div class=\"gm-load-regions col-sm-2\"></div></div>"
 
 function loadRegions() {
     $(".alc-event-results-table > tbody > tr").each(function(i, data) {
