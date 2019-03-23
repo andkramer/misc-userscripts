@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Seismic Roster Godmode
-// @version      0.0.2
+// @version      0.0.3
 // @license      GPL-3.0
 // @namespace    https://github.com/andkramer
 // @run-at       document-idle
