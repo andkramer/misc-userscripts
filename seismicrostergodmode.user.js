@@ -73,7 +73,7 @@ function updateTableView(hideActive) {
 function loadRegions() {
     $(".alc-event-results-table > tbody > tr").each(function(i, data) {
         var row = $(this);
-        if (i < 10 && row.children().length > 3) {
+        if (row.children().length > 3) {
             var profileColumn = row.children().eq(4);
             var profUrl = profileColumn.children().first().attr("href");
             var urlRegex = /.*(\/profile\/.*)/g;
