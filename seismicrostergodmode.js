@@ -15,7 +15,7 @@
 var $ = window.jQuery;
 
 var loadRegionsBtn = "<a style=\"width:154px\" href=\"#\"  class=\"btn btn-xs btn-default-alt btn-block\">Load Regions</a>";
-var godModePanel = "<div class=\"gm-panel row\"><div class=\"gm-divname col-sm-10\"></div><div class=\"gm-load-regions col-sm-2\"></div></div>"
+var godModePanel = "<div class=\"gm-panel row\"><div class=\"gm-divname col-sm-9\"></div><div class=\"gm-load-regions col-sm-3\"></div></div>"
 
 function loadRegions() {
     $(".alc-event-results-table > tbody > tr").each(function(i, data) {
