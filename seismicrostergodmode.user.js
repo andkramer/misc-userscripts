@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Seismic Roster Godmode
-// @version      0.1.0
+// @version      0.2.0
 // @license      GPL-3.0
 // @namespace    https://github.com/andkramer
 // @run-at       document-idle
@@ -27,7 +27,7 @@ var ocIcon64 = "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz
 // var emptyRow = $("<div class=\"gm-row row\"></div>");
 var onlyInactive = false;
 
-var regionMap;
+var cache;
 
 function isInactive(lastSeen) {
     var inactiveRegex = /.*(weeks|month|Never).*/g
@@ -53,12 +53,44 @@ function initView() {
     updateHideActiveButton();
 }
 
+function addColumnForGameActivity(){
+    $(".alc-event-results-table > thead > tr").children().eq(3).before('<th class>Last Seen In Destiny</th>');
+    $(".alc-event-results-table > tbody > tr").each(function(i, data) {
+        var row = $(this);
+        var isPlayerRow = row.children().length > 3;
+        if(isPlayerRow){
+            row.children().eq(3).before('<td class="highlight"></td>');
+        } else {
+            row.children().first().attr("colspan", row.children().first().attr("colspan")+1);
+        }
+    })
+}
+
+function fixBrokenTableColumns(){
+    var headerCount = $(".alc-event-results-table > thead > tr").children().length;
+    $(".alc-event-results-table > tbody > tr").each(function(i, data) {
+        var row = $(this);
+        var isPlayerRow = row.children().length > 3;
+        if(isPlayerRow){
+            while(row.children().length < headerCount) {
+                row.append($("<td></td>"));
+            }
+            while(row.children().length > headerCount && row.children().last().html() == "") {
+                row.children().last().remove();
+            }
+        } else {
+            row.children().first().attr("colspan", headerCount);
+        }
+    })
+}
+
 function updateTableView(hideActive) {
     $(".alc-event-results-table > tbody > tr").each(function(i, data) {
         var row = $(this);
-        if (row.children().length > 3) {
+        var isPlayerRow = row.children().length > 4;
+        if (isPlayerRow) {
             if(hideActive) {
-                var lastSeenColumn = row.children().eq(3);
+                var lastSeenColumn = row.children().eq(4);
                 var lastSeenValue = lastSeenColumn.html();
                 if(!isInactive(lastSeenValue)) {
                     row.hide();
@@ -73,36 +105,148 @@ function updateTableView(hideActive) {
 }
 
 function forceReloadRegions() {
-    loadRegions(true);
+    loadRegionsAndIngameNames(true);
 }
 
-function loadRegions(forceReload) {
+function updateLastSeenCellViaIngameName(ingameName, cell) {
+    var destinyNameRegex =/\.*#\d+/g;
+    if(! destinyNameRegex.test(ingameName)) {
+        cell.append("N/A");
+        return;
+    }
+    var uri = "https://www.bungie.net/Platform/Destiny2/SearchDestinyPlayer/4/" + ingameName + "/";
+    $.ajax({
+        url: uri.replace("#","%23"),
+        method: "GET",
+        crossDomain:true,
+        headers: {
+            "X-API-Key":"37de4c6ce0314acc981b0de9c705d2a3"
+        },
+        context: document.body,
+        success: function(data) {
+            try {
+                updateLastSeenCellViaMembershipId(data.Response[0].membershipId, cell);
+            } catch (err) {
+                cell.append("N/A");
+            }
+        },
+        error: function(data) {
+            cell.append("N/A");
+        }
+    });
+}
+
+function updateLastSeenCellViaMembershipId(membershipid, cell) {
+    $.ajax({
+        url: "https://www.bungie.net/Platform/Destiny2/4/Profile/" + membershipid + "/",
+        method: "GET",
+        data: {
+            "components":"100"
+        },
+        crossDomain:true,
+        headers: {
+            "X-API-Key":"37de4c6ce0314acc981b0de9c705d2a3"
+        },
+        context: document.body,
+        success: function(data) {
+            try {
+                cell.append(daysFromNow(data.Response.profile.data.dateLastPlayed));
+            } catch (err) {
+                cell.append("N/A");
+            }
+        },
+        error: function(data) {
+            cell.append("N/A");
+        },
+    });
+}
+
+function daysFromNow(date){
+    var msToDays = 1000*60*60*24;
+    var msToHours = 1000*60*60;
+    var msToMinutes = 1000*60;
+    var fullDays = Math.floor((new Date() - new Date(date)) / msToDays);
+    var remainingHours = Math.floor((new Date() - new Date(date)) / msToHours) - 24 * fullDays;
+    var remainingMinutes = Math.floor((new Date() - new Date(date)) / msToMinutes) - 24 * fullDays - 60 * remainingHours;
+    if(fullDays > 0){
+        var fullWeeks = Math.floor(fullDays / 7);
+        if (fullWeeks > 0) {
+            if(fullWeeks == 1) {
+                return fullWeeks + " week ago";
+            } else {
+                return fullWeeks + " weeks ago";
+            }
+        } else {
+            if(fullDays == 1) {
+                return fullDays + " day ago";
+            } else {
+                return fullDays + " days ago";
+            }
+        }
+    } else {
+        if (remainingHours > 0) {
+            if(remainingHours == 1) {
+                return remainingHours + " hour ago";
+            } else {
+                return remainingHours + " hours ago";
+            }
+        } else {
+            if (remainingMinutes < 5) {
+                return "Online";
+            } else {
+                return remainingMinutes + " minutes ago";
+            }
+        }
+    }
+}
+
+function extractRegion(profilePage) {
+    var regexRegion = /<span class=\"team-info__label\">Region:<\/span>\s*<span class="team-info__value ">(.*)<\/span>/g;
+    var matchRegion = regexRegion.exec(profilePage);
+    return matchRegion[1];
+}
+
+function extractIngameName(profilePage){
+    var regexIngameName = /<span class=\"team-info__label\">In-Game Name:<\/span>\s*<span class="team-info__value ">(.*)<\/span>/g;
+    var matchIngameName = regexIngameName.exec(profilePage);
+    return matchIngameName[1];
+}
+
+function loadRegionsAndIngameNames(forceReload) {
     console.log("Loading regions");
     var xhrs = [];
     $(".alc-event-results-table > tbody > tr").each(function(i, data) {
         var row = $(this);
-        if (row.children().length > 3) {
-            var profileColumn = row.children().eq(4);
+        if (row.children().length > 4) {
+            var profileColumn = row.children().eq(5);
             var profUrl = profileColumn.children().first().attr("href");
             var urlRegex = /.*(\/profile\/.*)/g;
             var relativeUrl = urlRegex.exec(profUrl)[1];
-            if(regionMap[relativeUrl] == undefined || forceReload) {
+            if(cache[relativeUrl] == undefined || forceReload) {
                 var xhr = $.ajax({
                     url: relativeUrl,
                     context: document.body,
-                }).done(function(data) {
-                    var regex = /<span class=\"team-info__label\">Region:<\/span>\s*<span class="team-info__value ">(.*)<\/span>/g;
-                    var match = regex.exec(data);
-                    var regionColumn = row.children().eq(1);
-                    var region = match[1];
-                    regionMap[relativeUrl] = region;
-                    updateRegionCell(regionColumn, region);
+                    success: function(data) {
+                        var region = extractRegion(data);
+                        var ingameName = extractIngameName(data);
+                        var regionCell = row.children().eq(1);
+                        var lastSeenIngameCell = row.children().eq(3);
+                        var profileCache = new Object();
+                        profileCache.region = region;
+                        profileCache.ingame = ingameName;
+                        cache[relativeUrl] = profile;
+                        updateRegionCell(regionCell, region);
+                        updateLastSeenCell(lastSeenIngameCell, ingameName);
+                    }
                 });
                 xhrs.push(xhr);
             } else {
-                var regionColumn = row.children().eq(1);
-                var region = regionMap[relativeUrl];
-                updateRegionCell(regionColumn, region);
+                var regionCell = row.children().eq(1);
+                var region = cache[relativeUrl].region;
+                var lastSeenIngameCell = row.children().eq(3);
+                var ingameName = cache[relativeUrl].ingame;
+                updateRegionCell(regionCell, region);
+                updateLastSeenCell(lastSeenIngameCell, ingameName);
             }
             if(xhrs.length > 0) {
                 $.when.apply($, xhrs).done(saveRegionCache);
@@ -111,22 +255,27 @@ function loadRegions(forceReload) {
     })
 }
 
-function updateRegionCell(regionColumn, region){
+function updateRegionCell(cell, region){
     if(region == "EU") {
         var iconEu = $('<img height = "1em">').attr('title', region).attr('src', euIcon64).css("height","30px");
-        regionColumn.empty();
-        regionColumn.append(iconEu);
+        cell.empty();
+        cell.append(iconEu);
     } else if (region == "NA") {
         var iconNa = $('<img height = "1em">').attr('title', region).attr('src', naIcon64).css("height","30px");
-        regionColumn.empty();
-        regionColumn.append(iconNa);
+        cell.empty();
+        cell.append(iconNa);
     } else if (region == "OC") {
         var iconOc = $('<img height = "1em">').attr('title', region).attr('src', ocIcon64).css("height","30px");
-        regionColumn.empty();
-        regionColumn.append(iconOc);
+        cell.empty();
+        cell.append(iconOc);
     } else {
-        regionColumn.html(region);
+        cell.html(region);
     }
+}
+
+function updateLastSeenCell(cell, ingameName){
+    cell.empty();
+    updateLastSeenCellViaIngameName(ingameName, cell);
 }
 
 function updateHideActiveButton(){
@@ -160,22 +309,23 @@ function addGodModePanel() {
     headline.empty();
     headline.html(godModePanel);
 }
-async function retrieveRegionCache(){
-    let cache = await GM.getValue("gm-region-map","{}");
-    regionMap = await JSON.parse(cache)
-    console.log("Loaded region cache with " + Object.keys(regionMap).length + " entries");
+async function retrieveCache(){
+    let cacheValue = await GM.getValue("gm-region-map","{}");
+    cache = await JSON.parse(cacheValue)
+    console.log("Loaded region cache with " + Object.keys(cache).length + " entries");
 }
 
 async function saveRegionCache() {
-    await GM.setValue("gm-region-map", JSON.stringify(regionMap));
+    await GM.setValue("gm-region-map", JSON.stringify(cache));
 }
 
 
 (async function() {
     onlyInactive = await GM.getValue("gm-only-inactive");
-
-    retrieveRegionCache().then(x => {
-        loadRegions(false);
+    retrieveCache().then(x => {
+        fixBrokenTableColumns();
+        addColumnForGameActivity();
+        loadRegionsAndIngameNames(false);
         addGodModePanel();
         initView();
     });
