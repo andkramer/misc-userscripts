@@ -8,8 +8,8 @@
 // @author       Andre Kramer (and.kramer@live.de)
 // @match        https://seismicgaming.eu/divisions/*/roster
 // @grant        none
-// @updateURL    TODO
-// @downloadURL  TODO
+// @updateURL    https://raw.githubusercontent.com/andkramer/misc-userscripts/master/seismicrostergodmode.js
+// @downloadURL  https://raw.githubusercontent.com/andkramer/misc-userscripts/master/seismicrostergodmode.js
 // ==/UserScript==
 
 var $ = window.jQuery;
