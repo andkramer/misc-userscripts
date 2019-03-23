@@ -14,11 +14,15 @@
 
 var $ = window.jQuery;
 
+var loadRegionsBtn = "<a style=\"width:154px\" href=\"#\"  class=\"btn btn-xs btn-default-alt btn-block\">Load Regions</a>";
+var godModePanel = "<div class=\"gm-panel row\"><div class=\"gm-divname col-sm-10\"></div><div class=\"gm-load-regions col-sm-2\"></div></div>"
+
 function loadRegions() {
     $(".alc-event-results-table > tbody > tr").each(function(i, data) {
-        var row = $(this);
-        if (row[0].childElementCount > 3) {
-            var profUrl = row[0].children[4].children[0].href;
+        var row = $(this)[0];
+        if (row.childElementCount > 3) {
+            var profileColumn = row.children[4];
+            var profUrl = profileColumn.children[0].href;
             var urlRegex =/.*(\/profile\/.*)/g;
             var relativeUrl = urlRegex.exec(profUrl)[1];
             $.ajax({
@@ -27,16 +31,24 @@ function loadRegions() {
             }).done(function(data) {
                 var regex = /<span class=\"team-info__label\">Region:<\/span>\s*<span class="team-info__value ">(.*)<\/span>/g;
                 var match = regex.exec(data);
-                row[0].children[1].innerHTML=match[1];
+                var regionColumn = row.children[1];
+                regionColumn.innerHTML=match[1];
             });
         }
     })
 }
 
+function addGodModePanel() {
+    var headline = $(".card__header");
+    var divName = headline.html();
+    headline.empty();
+    headline.html(godModePanel);
+    $(".gm-panel .gm-divname").append(divName);
+    $(".gm-panel .gm-load-regions").append(loadRegionsBtn);
+    $(".gm-panel .gm-load-regions > a").click(loadRegions);
+}
+
 (function() {
     "use strict";
-    var loadRegionsBtn = "<a onclick=\"loadRegions()\" style=\"width:154px\" href=\"#\"  class=\"btn btn-xs btn-default-alt btn-block\">Load Regions</a>";
-    var headline = $(".card__header");
-    headline.append(loadRegionsBtn);
-    $(".card__header > a").click(loadRegions);
+    addGodModePanel();
 })();
