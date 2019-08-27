@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Seismic Roster Godmode
-// @version      0.3.0
+// @version      0.4.0
 // @license      GPL-3.0
 // @namespace    https://github.com/andkramer
 // @run-at       document-idle
@@ -66,72 +66,20 @@ function updateTableView(hideActive) {
     });
     $(".gm-row-group").each(function(){
         if(hideActive) {
-        var sib = $(this).next();
-        //if the next visible sibling is another group, hide this group
-        while(sib.is(":hidden") && sib.is(".gm-row-player")) {
-              sib = sib.next();
-        }
-        if(sib.is(".gm-row-group")){
-           $(this).hide();
-        }
+            var sib = $(this).next();
+            //if the next visible sibling is another group, hide this group
+            while(sib.is(":hidden") && sib.is(".gm-row-player")) {
+                sib = sib.next();
+            }
+            if(sib.is(".gm-row-group")){
+                $(this).hide();
+            }
         } else {
             $(this).show();
         }
     });
 }
 
-function updateLastSeenCellViaIngameName(ingameName, cell) {
-    var destinyNameRegex =/\.*#\d+/g;
-    if(! destinyNameRegex.test(ingameName)) {
-        cell.append("N/A");
-        return;
-    }
-    var uri = "https://www.bungie.net/Platform/Destiny2/SearchDestinyPlayer/4/" + ingameName + "/";
-    $.ajax({
-        url: uri.replace("#","%23"),
-        method: "GET",
-        crossDomain:true,
-        headers: {
-            "X-API-Key":"37de4c6ce0314acc981b0de9c705d2a3"
-        },
-        context: document.body,
-        success: function(data) {
-            try {
-                updateLastSeenCellViaMembershipId(data.Response[0].membershipId, cell);
-            } catch (err) {
-                cell.append("N/A");
-            }
-        },
-        error: function(data) {
-            cell.append("N/A");
-        }
-    });
-}
-
-function updateLastSeenCellViaMembershipId(membershipid, cell) {
-    $.ajax({
-        url: "https://www.bungie.net/Platform/Destiny2/4/Profile/" + membershipid + "/",
-        method: "GET",
-        data: {
-            "components":"100"
-        },
-        crossDomain:true,
-        headers: {
-            "X-API-Key":"37de4c6ce0314acc981b0de9c705d2a3"
-        },
-        context: document.body,
-        success: function(data) {
-            try {
-                cell.append(daysFromNow(data.Response.profile.data.dateLastPlayed));
-            } catch (err) {
-                cell.append("N/A");
-            }
-        },
-        error: function(data) {
-            cell.append("N/A");
-        },
-    });
-}
 
 function daysFromNow(date){
     var msToDays = 1000*60*60*24;
@@ -173,15 +121,9 @@ function daysFromNow(date){
 }
 
 function extractRegion(profilePage) {
-    var regexRegion = /<span class=\"team-info__label\">Region:<\/span>\s*<span class="team-info__value ">(.*)<\/span>/g;
+    var regexRegion = /<span class=\"widget-player__info\">Region: (.*)<\/span>/g;
     var matchRegion = regexRegion.exec(profilePage);
     return matchRegion[1];
-}
-
-function extractIngameName(profilePage){
-    var regexIngameName = /<span class=\"team-info__label\">In-Game Name:<\/span>\s*<span class="team-info__value ">(.*)<\/span>/g;
-    var matchIngameName = regexIngameName.exec(profilePage);
-    return matchIngameName[1];
 }
 
 function loadRegionsAndIngameNames(forceReload) {
@@ -200,25 +142,18 @@ function loadRegionsAndIngameNames(forceReload) {
                     context: document.body,
                     success: function(data) {
                         var region = extractRegion(data);
-                        var ingameName = extractIngameName(data);
                         var regionCell = row.children().eq(1);
-                        var lastSeenIngameCell = row.children().eq(3);
                         var profileCache = new Object();
                         profileCache.region = region;
-                        profileCache.ingame = ingameName;
                         cache[relativeUrl] = profile;
                         updateRegionCell(regionCell, region);
-                        updateLastSeenCell(lastSeenIngameCell, ingameName);
                     }
                 });
                 xhrs.push(xhr);
             } else {
                 var regionCell = row.children().eq(1);
                 var region = cache[relativeUrl].region;
-                var lastSeenIngameCell = row.children().eq(3);
-                var ingameName = cache[relativeUrl].ingame;
                 updateRegionCell(regionCell, region);
-                updateLastSeenCell(lastSeenIngameCell, ingameName);
             }
             if(xhrs.length > 0) {
                 $.when.apply($, xhrs).done(saveRegionCache);
@@ -243,11 +178,6 @@ function updateRegionCell(cell, region){
     } else {
         cell.html(region);
     }
-}
-
-function updateLastSeenCell(cell, ingameName){
-    cell.empty();
-    updateLastSeenCellViaIngameName(ingameName, cell);
 }
 
 function updateHideActiveButton(){
@@ -280,16 +210,6 @@ function addGodModePanel() {
     headline.html(godModePanel);
 }
 
-function fillLastSeenColumn(){
-    console.log("Filling Regions");
-    $(".gm-row-player").each(function() {
-        var relativeUrl = $(this).attr("cachekey");
-        var lastSeenCell = $(this).find(".gm-td-ls-destiny");
-        var ingameName = cache[relativeUrl].ingame;
-        updateLastSeenCell(lastSeenCell, ingameName);
-    });
-}
-
 
 function fillRegionColumn(){
     console.log("Filling Regions");
@@ -317,12 +237,9 @@ function loadPlayerProfiles(forceReload) {
                 context: document.body,
                 success: function(data) {
                     var region = extractRegion(data);
-                    var ingameName = extractIngameName(data);
                     var regionCell = row.children().eq(1);
-                    var lastSeenIngameCell = row.children().eq(3);
                     var profileCache = new Object();
                     profileCache.region = region;
-                    profileCache.ingame = ingameName;
                     cache[relativeUrl] = profileCache;
                 }
             });
@@ -351,33 +268,21 @@ async function saveRegionCache() {
     await GM.setValue("gm-region-map", JSON.stringify(cache));
 }
 
-function addColumnForGameActivity(){
-    var pos = 3;
-    $(".alc-event-results-table > thead > tr").children().eq(pos).before('<th class>Last Seen In Destiny</th>');
+function addRegionColumn(){
+    var pos = 1;
+    $(".alc-event-results-table > thead > tr").children().eq(pos).before('<th class>Region</th>');
     for(var i = Object.keys(col).length; i >= pos+1; i--) {
         col[i] = col[i-1];
     }
-    col[pos]="Last Seen In Destiny";
+    col[pos]="Region";
     $(".gm-row-player").each(function(){
-        $(this).children().eq(pos).before('<td class="highlight gm-td gm-td-ls-destiny"></td>')
+        $(this).children().eq(pos).before('<td class="highlight gm-td gm-td-region"></td>')
     });
     $(".gm-row-group").each(function(){
         var colspan = $(this).children().first().attr("colspan");
         $(this).children().first().attr("colspan", colspan + 1);
     });
-}
-
-function fixBrokenTableColumns(){
-    var headerCount = $(".alc-event-results-table > thead > tr").children().length;
-    $(".gm-row-player > td:not(.gm-td)").remove();
-    $(".gm-row-player").each(function(){
-        if($(this).children().length < headerCount) {
-            $(this).append('<td class="gm-td gm-td-empty"></td>');
-        }
-    });
-    $(".alc-event-results-table > tbody .gm-row-group").each(function() {
-        $(this).children().first().attr("colspan", headerCount);
-    })
+    console.log(col);
 }
 
 function populateCol() {
@@ -386,14 +291,13 @@ function populateCol() {
         var cell = $(this).first();
         col[i] = cell.html();
     });
+    console.log(col);
 }
 
 function populateTags() {
     tags = new Object();
     tags["Name"]="gm-td-name";
     tags["Region"]="gm-td-region";
-    tags["Recent Voice Activity"]="gm-td-voice-act";
-    tags["Last Seen In Destiny"]="gm-td-ls-destiny";
     tags["Last Seen on Discord"]="gm-td-ls-discord";
     tags["View Profile"]="gm-td-view-profile"
 }
@@ -410,10 +314,11 @@ function preflightTag() {
     populateCol();
     populateTags();
     var headerCount = $(".alc-event-results-table > thead > tr").children().length;
+    console.log(headerCount);
     $(".alc-event-results-table > tbody > tr").each(function(i, data) {
         var row = $(this);
         var elementCount = row.children().length;
-        var isPlayerRow = row.children().length > 3;
+        var isPlayerRow = row.children()[0].classList[0] == "alc-event-results-cell__player";
         if(isPlayerRow){
             row.addClass("gm-row-player");
             row.find("td").each(function(j, dat){
@@ -433,11 +338,9 @@ function preflightTag() {
     await retrieveInactiveOnly();
     await retrieveCache();
     preflightTag();
-    fixBrokenTableColumns();
-    addColumnForGameActivity();
+    addRegionColumn();
     loadPlayerProfiles(false);
     fillRegionColumn();
-    fillLastSeenColumn();
     addGodModePanel();
     initView();
 })();
