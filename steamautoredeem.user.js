@@ -4,8 +4,8 @@
 // @license      GPL-3.0
 // @namespace    https://github.com/andkramer
 // @run-at       document-idle
-// @description  Automatically Accepts Steam Subscriber Agreement and Registers Product Key, Closes Tab after that happend successfully, keeps it open if an error occurs
-// @author       Andre Kramer (akramer@codingbros.io)
+// @description  Removes the shadow over displate limiteds on the limited page, enables a big preview on click.
+// @author       Andre Kramer (mail@akramer.dev)
 // @match        https://store.steampowered.com/account/registerkey?key=*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/andkramer/misc-userscripts/master/steamautoredeem.js
