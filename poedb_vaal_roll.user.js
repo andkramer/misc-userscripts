@@ -5,6 +5,8 @@
 // @description  Adds a Vaal Orb button to each unique item frame. Pre-calculates all values in a worker thread.
 // @author       You
 // @match        https://poedb.tw/us/Unique_item*
+// @updateURL    https://raw.githubusercontent.com/andkramer/misc-userscripts/master/poedb_vaal_roll.user.js
+// @downloadURL  https://raw.githubusercontent.com/andkramer/misc-userscripts/master/poedb_vaal_roll.user.js
 // @grant        none
 // ==/UserScript==
 
