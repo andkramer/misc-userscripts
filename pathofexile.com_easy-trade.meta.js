@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PoE Trade Quick Filters
 // @namespace    poe-trade-qf
-// @version      4.0
+// @version      4.1
 // @description  Compact mirror bar for the PoE trade search filters
 // @match        https://www.pathofexile.com/trade/search/*
 // @grant        none
