@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PoE Trade Quick Filters
 // @namespace    poe-trade-qf
-// @version      4.3
+// @version      4.4
 // @description  Compact mirror bar for the PoE trade search filters
 // @match        https://www.pathofexile.com/trade/search/*
 // @grant        none
@@ -152,9 +152,12 @@
       #qf-bar .power-control-btn { border-radius: ${RADIUS}; }
       #qf-bar .power-control-btn:hover { background: rgba(255,255,255,.06); }
       #qf-bar .power-control-mirror:hover { filter: brightness(1.15); }
-      .qf-floating-search {
-        position: fixed; bottom: 20px; right: 20px; z-index: 1000;
-        padding: 8px 18px !important; font-size: 13px !important;
+      .qf-floating-actions {
+        position: fixed; bottom: 80px; right: 20px; z-index: 1000;
+        display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+      }
+      .qf-floating-actions .power-control-mirror {
+        padding: 8px 18px; font-size: 13px;
         box-shadow: 0 2px 10px rgba(0,0,0,.5);
       }
     `;
@@ -782,12 +785,12 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
   }
 
   function addMirroredButton(slot, spec, fallbackCaption, options) {
-    const { accent, useSkin, extraClass } = options || {};
+    const { accent, useSkin, icon } = options || {};
 
     waitFor(() => findSiteButton(spec), (original) => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = extraClass ? `power-control-mirror ${extraClass}` : 'power-control-mirror';
+      button.className = 'power-control-mirror';
       button.style.cssText =
         'padding:5px 14px;cursor:pointer;border:1px solid ' +
         (accent || '#4a3f2f') + ';' +
@@ -795,13 +798,29 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
         `border-radius:${RADIUS};` +
         'white-space:nowrap;line-height:1.4;font-family:inherit;' +
         'transition:filter .12s;';
+      if (icon) {
+        button.style.display = 'inline-flex';
+        button.style.alignItems = 'center';
+        button.style.justifyContent = 'center';
+        button.style.width = '48px';
+        button.style.height = '48px';
+        button.style.padding = '0';
+        button.style.borderRadius = '0';
+        button.innerHTML = icon;
+      }
 
       const initialClasses = original.className;
       let skin = useSkin ? readSkin(original) : null;
       if (skin) applySkin(button, skin);
+      if (icon) button.style.borderRadius = '0';
 
       const sync = () => {
-        button.textContent = captionOf(original) || fallbackCaption;
+        const caption = captionOf(original) || fallbackCaption;
+        if (icon) {
+          button.title = caption;
+        } else {
+          button.textContent = caption;
+        }
 
         if (useSkin) {
           // Re-read while the original is still on screen; it may change colour
@@ -809,6 +828,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
             skin = readSkin(original);
           }
           applySkin(button, skin);
+          if (icon) button.style.borderRadius = '0';
           return;
         }
 
@@ -847,13 +867,23 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     }, 10000);
   }
 
+  const SEARCH_ICON_SVG =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" ' +
+    'stroke="currentColor" stroke-width="2.5" stroke-linecap="round">' +
+    '<circle cx="10" cy="10" r="6"/><line x1="15" y1="15" x2="20" y2="20"/></svg>';
+
   // Extra Search button pinned to the bottom-right corner of the filter
   // panel, so it stays reachable without scrolling back up.
-  function addFloatingSearchButton() {
-    waitFor(() => document.querySelector('.search-advanced-item'), (container) => {
-      if (container.querySelector('.qf-floating-search')) return;
-      addMirroredButton(container, SITE_BUTTONS.search, 'Search',
-        { useSkin: true, extraClass: 'qf-floating-search' });
+  function addFloatingActionBar() {
+    waitFor(() => document.querySelector('.search-advanced-items'), (container) => {
+      if (container.querySelector('.qf-floating-actions')) return;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'qf-floating-actions';
+      container.appendChild(wrap);
+
+      addMirroredButton(wrap, SITE_BUTTONS.search, 'Search',
+        { useSkin: true, icon: SEARCH_ICON_SVG });
     });
   }
 
@@ -950,7 +980,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
 
     addBuyoutMirror(price, { label: 'Buyout', filterTitle: 'Buyout Price' });
 
-    addFloatingSearchButton();
+    addFloatingActionBar();
 
     let wasActive = null;
     const applyTabState = () => {
