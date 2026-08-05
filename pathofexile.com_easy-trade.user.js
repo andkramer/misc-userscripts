@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PoE Trade Quick Filters
 // @namespace    poe-trade-qf
-// @version      4.4
+// @version      4.5
 // @description  Compact mirror bar for the PoE trade search filters
 // @match        https://www.pathofexile.com/trade/search/*
 // @grant        none
@@ -471,8 +471,9 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     });
   }
 
-  // Two-way binding between a mirrored input and its original
-  function bindInput(copy, original) {
+  // Two-way binding between a mirrored input and its original.
+  // `onChange` fires whenever copy.value actually changes, from either side.
+  function bindInput(copy, original, onChange) {
     let writing = false;
 
     const pushToOriginal = () => {
@@ -480,6 +481,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       if (copy.value !== '') enableGroupFor(original);
       setInputValue(original, copy.value);
       setTimeout(() => { writing = false; }, 60);
+      if (onChange) onChange();
     };
 
     copy.addEventListener('input', pushToOriginal);
@@ -497,7 +499,9 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
 
     const pullFromOriginal = () => {
       if (writing) return;
-      if (copy.value !== original.value) copy.value = original.value || '';
+      if (copy.value === original.value) return;
+      copy.value = original.value || '';
+      if (onChange) onChange();
     };
 
     new MutationObserver(pullFromOriginal).observe(original, {
@@ -528,10 +532,22 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     button.type = 'button';
     button.className = 'qf-clear';
     button.textContent = '×';
-    button.title = `Reset ${label}`;
+
+    const syncState = () => {
+      const active = entries.some(({ copy }) => copy.value !== '');
+      button.disabled = !active;
+      button.title = active ? `Reset ${label}` : '';
+      button.style.opacity = active ? '1' : '0.35';
+      button.style.pointerEvents = active ? 'auto' : 'none';
+    };
+
     button.addEventListener('click', () => {
       entries.forEach(({ copy, push }) => { copy.value = ''; push(); });
+      syncState();
     });
+
+    button.syncState = syncState;
+    syncState();
     return button;
   }
 
@@ -560,14 +576,17 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       inputWrap.className = 'qf-inputs';
       group.appendChild(inputWrap);
 
+      let notifyClearState = () => {};
       const entries = originals.map((original) => {
         const copy = createMirroredInput(original);
-        const push = bindInput(copy, original);
+        const push = bindInput(copy, original, () => notifyClearState());
         inputWrap.appendChild(copy);
         return { copy, push };
       });
 
-      group.appendChild(createResetButton(label, entries));
+      const resetButton = createResetButton(label, entries);
+      notifyClearState = resetButton.syncState;
+      group.appendChild(resetButton);
     });
   }
 
@@ -675,14 +694,17 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       inputWrap.className = 'qf-inputs';
       group.appendChild(inputWrap);
 
+      let notifyClearState = () => {};
       const entries = originals.map((original) => {
         const copy = createMirroredInput(original);
-        const push = bindInput(copy, original);
+        const push = bindInput(copy, original, () => notifyClearState());
         inputWrap.appendChild(copy);
         return { copy, push };
       });
 
-      group.appendChild(createResetButton(label, entries));
+      const resetButton = createResetButton(label, entries);
+      notifyClearState = resetButton.syncState;
+      group.appendChild(resetButton);
 
       // Only an exact match highlights a button; any other currency clears all
       function syncCurrency() {
