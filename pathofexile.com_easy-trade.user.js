@@ -45,11 +45,11 @@
   const RANGE_FILTERS = [
     { label: 'iLvl',    filterTitle: 'Item Level' },
     { label: 'Gem Lvl', filterTitle: 'Gem Level' },
-    { label: 'Quality',    filterTitle: 'Quality' }
+    { label: 'Quality',    filterTitle: 'Quality' },
+    { label: 'Strands', filterTitle: 'Memory Strands' }
   ];
 
   const DROPDOWN_FILTERS = [
-    { label: 'Category', filterTitle: 'Item Category' },
     { label: 'Rarity',   filterTitle: 'Item Rarity' }
   ];
 
