@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PoE Trade Quick Filters
 // @namespace    poe-trade-qf
-// @version      4.2
+// @version      4.3
 // @description  Compact mirror bar for the PoE trade search filters
 // @match        https://www.pathofexile.com/trade/search/*
 // @grant        none
@@ -152,6 +152,11 @@
       #qf-bar .power-control-btn { border-radius: ${RADIUS}; }
       #qf-bar .power-control-btn:hover { background: rgba(255,255,255,.06); }
       #qf-bar .power-control-mirror:hover { filter: brightness(1.15); }
+      .qf-floating-search {
+        position: fixed; bottom: 20px; right: 20px; z-index: 1000;
+        padding: 8px 18px !important; font-size: 13px !important;
+        box-shadow: 0 2px 10px rgba(0,0,0,.5);
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   })();
@@ -777,12 +782,12 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
   }
 
   function addMirroredButton(slot, spec, fallbackCaption, options) {
-    const { accent, useSkin } = options || {};
+    const { accent, useSkin, extraClass } = options || {};
 
     waitFor(() => findSiteButton(spec), (original) => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'power-control-mirror';
+      button.className = extraClass ? `power-control-mirror ${extraClass}` : 'power-control-mirror';
       button.style.cssText =
         'padding:5px 14px;cursor:pointer;border:1px solid ' +
         (accent || '#4a3f2f') + ';' +
@@ -840,6 +845,16 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       if (DEBUG) console.log('[QF] mirrored button:', fallbackCaption,
         '->', original.className || original.tagName);
     }, 10000);
+  }
+
+  // Extra Search button pinned to the bottom-right corner of the filter
+  // panel, so it stays reachable without scrolling back up.
+  function addFloatingSearchButton() {
+    waitFor(() => document.querySelector('.search-advanced-item'), (container) => {
+      if (container.querySelector('.qf-floating-search')) return;
+      addMirroredButton(container, SITE_BUTTONS.search, 'Search',
+        { useSkin: true, extraClass: 'qf-floating-search' });
+    });
   }
 
   // --- Layout --------------------------------------------------------------
@@ -934,6 +949,8 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     RANGE_FILTERS.forEach(config => addRangeMirror(fields, config));
 
     addBuyoutMirror(price, { label: 'Buyout', filterTitle: 'Buyout Price' });
+
+    addFloatingSearchButton();
 
     let wasActive = null;
     const applyTabState = () => {
