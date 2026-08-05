@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PoE Trade Quick Filters
 // @namespace    poe-trade-qf
-// @version      4.1
+// @version      4.2
 // @description  Compact mirror bar for the PoE trade search filters
 // @match        https://www.pathofexile.com/trade/search/*
 // @grant        none
@@ -45,11 +45,11 @@
   const RANGE_FILTERS = [
     { label: 'iLvl',    filterTitle: 'Item Level' },
     { label: 'Gem Lvl', filterTitle: 'Gem Level' },
-    { label: 'Quality',    filterTitle: 'Quality' }
+    { label: 'Quality',    filterTitle: 'Quality' },
+    { label: 'Strands', filterTitle: 'Memory Strands' }
   ];
 
   const DROPDOWN_FILTERS = [
-    { label: 'Category', filterTitle: 'Item Category' },
     { label: 'Rarity',   filterTitle: 'Item Rarity' }
   ];
 
