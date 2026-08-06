@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PoE Trade Quick Filters
 // @namespace    poe-trade-qf
-// @version      4.5
+// @version      5.0
 // @description  Compact mirror bar for the PoE trade search filters
 // @match        https://www.pathofexile.com/trade/search/*
 // @grant        none
@@ -17,6 +17,7 @@
   const ICON_SIZE = 30;
   const HIDE_CONTROLS = true;   // clip the site's own controls bar
   const RADIUS = '4px';
+  const POLL_MS = 1000;        // fallback tick where Vue changes fire no event
   const SLOW_SELECT = false;   // step through selectOption with visible delays
   const STEP_MS = 1500;        // pause between steps when SLOW_SELECT is on
 
@@ -73,6 +74,11 @@
     Yes: { filter: 'brightness(1.15)', opacity: '1' },
     No:  { filter: 'brightness(0.85) saturate(0.8)', opacity: '1' }
   };
+
+  const SEARCH_ICON_SVG =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" ' +
+    'stroke="currentColor" stroke-width="2.5" stroke-linecap="round">' +
+    '<circle cx="10" cy="10" r="6"/><line x1="15" y1="15" x2="20" y2="20"/></svg>';
 
   (function injectStyle() {
     const style = document.createElement('style');
@@ -164,26 +170,76 @@
     (document.head || document.documentElement).appendChild(style);
   })();
 
+  // --- Lifecycle -----------------------------------------------------------
+
+  // Every observer/timer a widget starts registers its teardown here, so
+  // rebuilding the mirror UI (see ensureMirrorUI) does not leave orphaned
+  // watchers polling detached nodes for the rest of the session.
+  const disposers = [];
+
+  function registerDisposer(dispose) {
+    disposers.push(dispose);
+  }
+
+  function disposeAll() {
+    while (disposers.length) disposers.pop()();
+  }
+
+  // Watches a vue-multiselect for selection changes. Vue swaps the
+  // --selected class without firing an event we can hook, and sometimes
+  // without touching the class at all, hence the extra poll.
+  function watchMultiselect(multiselect, onChange) {
+    const observer = new MutationObserver(onChange);
+    observer.observe(multiselect, {
+      attributes: true, subtree: true, attributeFilter: ['class']
+    });
+    const timer = setInterval(onChange, POLL_MS);
+    registerDisposer(() => { observer.disconnect(); clearInterval(timer); });
+  }
+
   // --- DOM helpers ---------------------------------------------------------
 
   // Resolves once test() returns something truthy, then stops observing.
-  function waitFor(test, onFound, timeout = 20000) {
+  function waitFor(test, onFound, timeout = 20000, label = 'unlabeled') {
     const immediate = test();
-    if (immediate) return onFound(immediate);
+    if (immediate) {
+      if (DEBUG) console.log(`[QF/wait:${label}] found immediately`);
+      return onFound(immediate);
+    }
+    if (DEBUG) console.log(`[QF/wait:${label}] not found yet, observing...`);
 
-    const observer = new MutationObserver(() => {
+    let observer = null;
+    let timer = null;
+    const stop = () => {
+      if (observer) observer.disconnect();
+      clearTimeout(timer);
+    };
+
+    observer = new MutationObserver(() => {
       const found = test();
       if (!found) return;
-      observer.disconnect();
-      clearTimeout(timer);
+      stop();
+      if (DEBUG) console.log(`[QF/wait:${label}] found via mutation`);
       onFound(found);
     });
     observer.observe(document.body, { childList: true, subtree: true });
 
-    const timer = setTimeout(() => {
-      observer.disconnect();
-      console.warn('[QF] timed out waiting for element');
+    timer = setTimeout(() => {
+      stop();
+      console.warn(`[QF] timed out waiting for element: ${label}`);
     }, timeout);
+
+    // A pending wait belongs to the generation that started it; abandon it
+    // when that generation is torn down.
+    registerDisposer(stop);
+  }
+
+  // Waits for a filter whose vue-multiselect has been rendered.
+  function waitForMultiselectFilter(filterTitle, onFound) {
+    waitFor(() => {
+      const filter = findFilterByTitle(filterTitle);
+      return filter && filter.querySelector('.multiselect') ? filter : null;
+    }, onFound, 20000, `filter:${filterTitle}`);
   }
 
   function findSiteButton(spec, scope) {
@@ -214,13 +270,20 @@
   // Not to be confused with .search-advanced, which holds the filters.
   function findControlsBar() {
     const direct = document.querySelector('.search-panel > .controls, .controls');
-    if (direct && direct.id !== 'qf-bar') return direct;
+    if (direct && direct.id !== 'qf-bar') {
+      if (DEBUG) console.log('[QF/tab] findControlsBar: matched direct selector', direct);
+      return direct;
+    }
 
     const liveButton = findSiteButton(SITE_BUTTONS.live);
     if (liveButton) {
       const container = liveButton.closest('.controls') || liveButton.parentElement;
-      if (container && container.id !== 'qf-bar') return container;
+      if (container && container.id !== 'qf-bar') {
+        if (DEBUG) console.log('[QF/tab] findControlsBar: matched via live button', container);
+        return container;
+      }
     }
+    if (DEBUG) console.log('[QF/tab] findControlsBar: nothing found this pass');
     return null;
   }
 
@@ -229,7 +292,7 @@
     return selected ? selected.textContent.trim() : 'Any';
   };
 
-// A filter group is active when its header toggle is not marked "off".
+  // A filter group is active when its header toggle is not marked "off".
   const GROUP_SELECTOR = '.filter-group';
   const GROUP_TOGGLE_SELECTOR = '.filter-group-header .toggle-btn';
 
@@ -424,10 +487,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     holder.style.cssText = 'display:inline-flex;';
     slot.appendChild(holder);
 
-    waitFor(() => {
-      const filter = findFilterByTitle(filterTitle);
-      return filter && filter.querySelector('.multiselect') ? filter : null;
-    }, (filter) => {
+    waitForMultiselectFilter(filterTitle, (filter) => {
       const multiselect = filter.querySelector('.multiselect');
       if (DEBUG) console.log('[QF] tristate filter ready:', filterTitle);
 
@@ -462,10 +522,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       setTimeout(render, 500);
 
       // Pick up external changes: Clear button, URL load, original combobox
-      new MutationObserver(render).observe(multiselect, {
-        attributes: true, subtree: true, attributeFilter: ['class']
-      });
-      setInterval(render, 1000);
+      watchMultiselect(multiselect, render);
 
       holder.appendChild(button);
     });
@@ -504,13 +561,13 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       if (onChange) onChange();
     };
 
-    new MutationObserver(pullFromOriginal).observe(original, {
-      attributes: true, attributeFilter: ['value']
-    });
+    const observer = new MutationObserver(pullFromOriginal);
+    observer.observe(original, { attributes: true, attributeFilter: ['value'] });
     original.addEventListener('input', pullFromOriginal);
     original.addEventListener('change', pullFromOriginal);
     // Vue writes .value without touching the attribute, so poll as well
-    setInterval(pullFromOriginal, 1000);
+    const timer = setInterval(pullFromOriginal, POLL_MS);
+    registerDisposer(() => { observer.disconnect(); clearInterval(timer); });
 
     trackedOriginals.add(original);
     return pushToOriginal;
@@ -551,6 +608,38 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     return button;
   }
 
+  function addFieldLabel(group, label) {
+    const labelEl = document.createElement('span');
+    labelEl.className = 'qf-field-label';
+    labelEl.textContent = label;
+    group.appendChild(labelEl);
+  }
+
+  const numberInputsOf = (filter) =>
+    [...filter.querySelectorAll('input.minmax, input[type="number"]')];
+
+  // Fills a .qf-field group with mirrored min/max inputs and their reset
+  // button. Shared by the plain range filters and Buyout Price.
+  function addMirroredInputs(group, originals, label) {
+    const inputWrap = document.createElement('span');
+    inputWrap.className = 'qf-inputs';
+    group.appendChild(inputWrap);
+
+    // The reset button only exists after its entries do, so route the
+    // change notification through a placeholder until it is built.
+    let notifyClearState = () => {};
+    const entries = originals.map((original) => {
+      const copy = createMirroredInput(original);
+      const push = bindInput(copy, original, () => notifyClearState());
+      inputWrap.appendChild(copy);
+      return { copy, push };
+    });
+
+    const resetButton = createResetButton(label, entries);
+    notifyClearState = resetButton.syncState;
+    group.appendChild(resetButton);
+  }
+
   function addRangeMirror(slot, config) {
     const { label, filterTitle } = config;
 
@@ -561,33 +650,15 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     waitFor(() => {
       const filter = findFilterByTitle(filterTitle);
       if (!filter) return null;
-      const inputs = [...filter.querySelectorAll('input.minmax, input[type="number"]')];
+      const inputs = numberInputsOf(filter);
       return inputs.length ? inputs : null;
     }, (originals) => {
       if (DEBUG) console.log('[QF] range filter ready:', filterTitle,
         '- fields:', originals.length);
 
-      const labelEl = document.createElement('span');
-      labelEl.className = 'qf-field-label';
-      labelEl.textContent = label;
-      group.appendChild(labelEl);
-
-      const inputWrap = document.createElement('span');
-      inputWrap.className = 'qf-inputs';
-      group.appendChild(inputWrap);
-
-      let notifyClearState = () => {};
-      const entries = originals.map((original) => {
-        const copy = createMirroredInput(original);
-        const push = bindInput(copy, original, () => notifyClearState());
-        inputWrap.appendChild(copy);
-        return { copy, push };
-      });
-
-      const resetButton = createResetButton(label, entries);
-      notifyClearState = resetButton.syncState;
-      group.appendChild(resetButton);
-    });
+      addFieldLabel(group, label);
+      addMirroredInputs(group, originals, label);
+    }, 20000, `range:${filterTitle}`);
   }
 
   function addDropdownMirror(slot, config) {
@@ -597,17 +668,11 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     group.className = 'qf-field';
     slot.appendChild(group);
 
-    waitFor(() => {
-      const filter = findFilterByTitle(filterTitle);
-      return filter && filter.querySelector('.multiselect') ? filter : null;
-    }, (filter) => {
+    waitForMultiselectFilter(filterTitle, (filter) => {
       const multiselect = filter.querySelector('.multiselect');
       if (DEBUG) console.log('[QF] dropdown filter ready:', filterTitle);
 
-      const labelEl = document.createElement('span');
-      labelEl.className = 'qf-field-label';
-      labelEl.textContent = label;
-      group.appendChild(labelEl);
+      addFieldLabel(group, label);
 
       const select = document.createElement('select');
       group.appendChild(select);
@@ -658,10 +723,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
         select.value = current;
       };
 
-      new MutationObserver(syncFromOriginal).observe(multiselect, {
-        attributes: true, subtree: true, attributeFilter: ['class']
-      });
-      setInterval(syncFromOriginal, 1000);
+      watchMultiselect(multiselect, syncFromOriginal);
     });
   }
 
@@ -677,34 +739,13 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     currencyBox.className = 'qf-cur';
     slot.appendChild(currencyBox);
 
-    waitFor(() => {
-      const filter = findFilterByTitle(filterTitle);
-      return filter && filter.querySelector('.multiselect') ? filter : null;
-    }, (filter) => {
+    waitForMultiselectFilter(filterTitle, (filter) => {
       const multiselect = filter.querySelector('.multiselect');
-      const originals = [...filter.querySelectorAll('input.minmax, input[type="number"]')];
+      const originals = numberInputsOf(filter);
       if (DEBUG) console.log('[QF] buyout filter ready - fields:', originals.length);
 
-      const labelEl = document.createElement('span');
-      labelEl.className = 'qf-field-label';
-      labelEl.textContent = label;
-      group.appendChild(labelEl);
-
-      const inputWrap = document.createElement('span');
-      inputWrap.className = 'qf-inputs';
-      group.appendChild(inputWrap);
-
-      let notifyClearState = () => {};
-      const entries = originals.map((original) => {
-        const copy = createMirroredInput(original);
-        const push = bindInput(copy, original, () => notifyClearState());
-        inputWrap.appendChild(copy);
-        return { copy, push };
-      });
-
-      const resetButton = createResetButton(label, entries);
-      notifyClearState = resetButton.syncState;
-      group.appendChild(resetButton);
+      addFieldLabel(group, label);
+      addMirroredInputs(group, originals, label);
 
       // Only an exact match highlights a button; any other currency clears all
       function syncCurrency() {
@@ -764,14 +805,17 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
 
       syncCurrency();
       setTimeout(syncCurrency, 600);
-      new MutationObserver(syncCurrency).observe(multiselect, {
-        attributes: true, subtree: true, attributeFilter: ['class']
-      });
-      setInterval(syncCurrency, 1000);
+      watchMultiselect(multiselect, syncCurrency);
     });
   }
 
   // --- Mirrored site buttons ----------------------------------------------
+
+  const BUTTON_BG = '#2a2a2a';
+  const BUTTON_BORDER = '#4a3f2f';
+  const BUTTON_ACTIVE_BG = '#3d5a3d';
+  const BUTTON_ACTIVE_BORDER = '#6a9a5a';
+  const ICON_BUTTON_SIZE = 48;
 
   // Copies the original's colours. border-radius is deliberately not copied.
   function readSkin(original) {
@@ -781,7 +825,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       /rgba\(0,\s*0,\s*0,\s*0\)/.test(background);
 
     return {
-      background: isTransparent ? '#2a2a2a' : background,
+      background: isTransparent ? BUTTON_BG : background,
       backgroundImage: computed.backgroundImage !== 'none' ? computed.backgroundImage : '',
       color: computed.color,
       borderColor: computed.borderTopColor,
@@ -793,7 +837,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     };
   }
 
-  function applySkin(button, skin) {
+  function applySkin(button, skin, radius) {
     button.style.background = skin.background;
     if (skin.backgroundImage) button.style.backgroundImage = skin.backgroundImage;
     button.style.color = skin.color;
@@ -803,54 +847,46 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     button.style.fontWeight = skin.fontWeight;
     button.style.textTransform = skin.textTransform;
     button.style.letterSpacing = skin.letterSpacing;
-    button.style.borderRadius = RADIUS;
+    button.style.borderRadius = radius;
   }
 
+  // `icon` turns the button into a square, caption-less variant that keeps
+  // the original's wording as its tooltip instead.
   function addMirroredButton(slot, spec, fallbackCaption, options) {
-    const { accent, useSkin, icon } = options || {};
+    const { useSkin, icon } = options || {};
+    const radius = icon ? '0' : RADIUS;
 
     waitFor(() => findSiteButton(spec), (original) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'power-control-mirror';
       button.style.cssText =
-        'padding:5px 14px;cursor:pointer;border:1px solid ' +
-        (accent || '#4a3f2f') + ';' +
-        'background:#2a2a2a;color:#e0d6c0;font-size:12px;' +
-        `border-radius:${RADIUS};` +
+        `cursor:pointer;border:1px solid ${BUTTON_BORDER};` +
+        `background:${BUTTON_BG};color:#e0d6c0;font-size:12px;` +
+        `border-radius:${radius};` +
         'white-space:nowrap;line-height:1.4;font-family:inherit;' +
-        'transition:filter .12s;';
-      if (icon) {
-        button.style.display = 'inline-flex';
-        button.style.alignItems = 'center';
-        button.style.justifyContent = 'center';
-        button.style.width = '48px';
-        button.style.height = '48px';
-        button.style.padding = '0';
-        button.style.borderRadius = '0';
-        button.innerHTML = icon;
-      }
+        'transition:filter .12s;' +
+        (icon
+          ? 'display:inline-flex;align-items:center;justify-content:center;' +
+            `width:${ICON_BUTTON_SIZE}px;height:${ICON_BUTTON_SIZE}px;padding:0;`
+          : 'padding:5px 14px;');
+      if (icon) button.innerHTML = icon;
 
       const initialClasses = original.className;
       let skin = useSkin ? readSkin(original) : null;
-      if (skin) applySkin(button, skin);
-      if (icon) button.style.borderRadius = '0';
+      if (skin) applySkin(button, skin, radius);
 
       const sync = () => {
         const caption = captionOf(original) || fallbackCaption;
-        if (icon) {
-          button.title = caption;
-        } else {
-          button.textContent = caption;
-        }
+        if (icon) button.title = caption;
+        else button.textContent = caption;
 
         if (useSkin) {
           // Re-read while the original is still on screen; it may change colour
           if (original.offsetParent !== null || original.getClientRects().length) {
             skin = readSkin(original);
           }
-          applySkin(button, skin);
-          if (icon) button.style.borderRadius = '0';
+          applySkin(button, skin, radius);
           return;
         }
 
@@ -860,16 +896,18 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
         const isActive = /active|running|live-active|stop/i.test(
           `${addedClasses} ${childClasses}`) || /stop|deactivate/i.test(captionOf(original));
 
-        button.style.background = isActive ? '#3d5a3d' : '#2a2a2a';
-        button.style.borderColor = isActive ? '#6a9a5a' : (accent || '#4a3f2f');
+        button.style.background = isActive ? BUTTON_ACTIVE_BG : BUTTON_BG;
+        button.style.borderColor = isActive ? BUTTON_ACTIVE_BORDER : BUTTON_BORDER;
       };
 
       sync();
 
-      new MutationObserver(sync).observe(original, {
+      const observer = new MutationObserver(sync);
+      observer.observe(original, {
         childList: true, subtree: true, characterData: true,
         attributes: true, attributeFilter: ['class', 'style']
       });
+      registerDisposer(() => observer.disconnect());
 
       // Live Search may only settle after a server response
       button.addEventListener('click', () => {
@@ -886,13 +924,8 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       slot.appendChild(button);
       if (DEBUG) console.log('[QF] mirrored button:', fallbackCaption,
         '->', original.className || original.tagName);
-    }, 10000);
+    }, 10000, `button:${fallbackCaption}`);
   }
-
-  const SEARCH_ICON_SVG =
-    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" ' +
-    'stroke="currentColor" stroke-width="2.5" stroke-linecap="round">' +
-    '<circle cx="10" cy="10" r="6"/><line x1="15" y1="15" x2="20" y2="20"/></svg>';
 
   // Extra Search button pinned to the bottom-right corner of the filter
   // panel, so it stays reachable without scrolling back up.
@@ -906,7 +939,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
 
       addMirroredButton(wrap, SITE_BUTTONS.search, 'Search',
         { useSkin: true, icon: SEARCH_ICON_SVG });
-    });
+    }, 20000, 'floating-actions-container');
   }
 
   // --- Layout --------------------------------------------------------------
@@ -984,9 +1017,63 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
 
   // --- Bootstrap -----------------------------------------------------------
 
-  waitFor(() => findControlsBar(), (controls) => {
+  // The site re-renders the filter fields in place when switching between
+  // tabs (e.g. Search <-> Bulk Exchange) even while the outer .controls
+  // container survives, detaching every original our mirrors are bound to.
+  // `activeUI` tracks the bar currently mounted so we can detect that and
+  // rebuild from scratch.
+  let activeUI = null;
+
+  function isMirrorUIStale() {
+    if (!activeUI) {
+      if (DEBUG) console.log('[QF/tab] stale check: no activeUI yet');
+      return true;
+    }
+    if (!activeUI.controls.isConnected) {
+      if (DEBUG) console.log('[QF/tab] stale check: controls container detached');
+      return true;
+    }
+    if (!activeUI.bar.isConnected) {
+      if (DEBUG) console.log('[QF/tab] stale check: our own bar detached');
+      return true;
+    }
+    // The site can re-render the deeper filter fields (range/dropdown/
+    // tristate inputs) in place while the outer .controls container
+    // persists, so check those individually too.
+    for (const original of trackedOriginals) {
+      if (!original.isConnected) {
+        if (DEBUG) console.log('[QF/tab] stale check: a tracked filter input is detached', original);
+        return true;
+      }
+    }
+    if (DEBUG) {
+      console.log('[QF/tab] stale check: everything still connected',
+        '(tracking', trackedOriginals.size, 'filter inputs)');
+    }
+    return false;
+  }
+
+  function teardownMirrorUI() {
+    if (DEBUG) console.log('[QF/tab] tearing down stale mirror UI');
+    // Stop every watcher first, so nothing keeps polling the nodes we
+    // are about to drop.
+    disposeAll();
+    const oldBar = document.getElementById('qf-bar');
+    if (oldBar) oldBar.remove();
+    const oldFloating = document.querySelector('.qf-floating-actions');
+    if (oldFloating) oldFloating.remove();
+    trackedOriginals.clear();
+    activeUI = null;
+  }
+
+  function mountMirrorUI(controls) {
+    if (DEBUG) console.log('[QF/tab] mounting mirror UI against controls:', controls);
     const slots = mountBar(controls);
-    if (!slots) return console.warn('[QF] could not insert bar');
+    if (!slots) {
+      console.warn('[QF] bar already present, skipping mount - ' +
+        'the previous teardown did not remove it');
+      return;
+    }
     const { bar, left, fields, center, right, price } = slots;
 
     addMirroredButton(left, SITE_BUTTONS.live, 'Live Search', { useSkin: true });
@@ -1004,21 +1091,61 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
 
     addFloatingActionBar();
 
-    let wasActive = null;
-    const applyTabState = () => {
-      const active = isSearchTabActive();
-      if (active === wasActive) return;
-      wasActive = active;
+    activeUI = { bar, controls };
+    if (DEBUG) console.log('[QF/tab] mount complete, activeUI set:', activeUI);
+  }
 
-      bar.style.display = active ? 'flex' : 'none';
-      if (HIDE_CONTROLS) clipControls(controls, active);
+  // Rebuilds the mirror UI only if the previous one went stale (its
+  // originals got detached). Cheap no-op otherwise.
+  function ensureMirrorUI(onReady) {
+    if (!isMirrorUIStale()) {
+      if (DEBUG) console.log('[QF/tab] ensureMirrorUI: not stale, skipping rebuild');
+      return onReady();
+    }
+
+    if (DEBUG) console.log('[QF/tab] ensureMirrorUI: stale, rebuilding');
+    teardownMirrorUI();
+    waitFor(() => findControlsBar(), (controls) => {
+      mountMirrorUI(controls);
+      onReady();
+    }, 20000, 'controls-bar');
+  }
+
+  let wasActive = null;
+  const applyTabState = () => {
+    const active = isSearchTabActive();
+    if (DEBUG) console.log('[QF/tab] applyTabState fired: active =', active, '| wasActive =', wasActive);
+    if (active === wasActive) return;
+    wasActive = active;
+
+    if (!active) {
+      if (activeUI) {
+        activeUI.bar.style.display = 'none';
+        if (HIDE_CONTROLS) clipControls(activeUI.controls, false);
+      }
       if (DEBUG) console.log('[QF] search tab active:', active);
-    };
+      return;
+    }
 
+    ensureMirrorUI(() => {
+      if (!activeUI) {
+        console.warn('[QF/tab] ensureMirrorUI onReady but activeUI is still null');
+        return;
+      }
+      activeUI.bar.style.display = 'flex';
+      if (HIDE_CONTROLS) clipControls(activeUI.controls, true);
+      if (DEBUG) console.log('[QF] search tab active:', active);
+    });
+  };
+
+  ensureMirrorUI(() => {
     // Delayed so mirrored buttons can read their originals while still visible
     setTimeout(applyTabState, 1200);
 
+    // Deliberately not registered as a disposer: this watcher is what
+    // triggers a rebuild, so it has to outlive every teardown.
     const tabList = document.querySelector('ul.nav-tabs.main');
+    if (DEBUG) console.log('[QF/tab] tab list element:', tabList);
     if (tabList) {
       new MutationObserver(applyTabState).observe(tabList, {
         attributes: true, attributeFilter: ['class'], subtree: true
