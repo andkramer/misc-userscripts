@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PoE Trade Quick Filters
 // @namespace    poe-trade-qf
-// @version      5.0
+// @version      5.1
 // @description  Compact mirror bar for the PoE trade search filters
 // @match        https://www.pathofexile.com/trade/search/*
 // @grant        none
@@ -20,6 +20,16 @@
   const POLL_MS = 1000;        // fallback tick where Vue changes fire no event
   const SLOW_SELECT = false;   // step through selectOption with visible delays
   const STEP_MS = 1500;        // pause between steps when SLOW_SELECT is on
+
+  // The site's own "Back to Top" button owns the bottom-right corner. Ours
+  // copies its geometry and colours and stacks one gap above it.
+  const TOP_BUTTON_SELECTOR = '.top-btn';
+  const CORNER_SIZE = 48;
+  const CORNER_GAP = 20;
+  const CORNER_PALETTE = { bg: '#0f304d', border: '#4c4c7d' };
+  // Keep sampling this long after the last movement; covers .top-btn's own
+  // 0.2s slide plus slack.
+  const CORNER_SETTLE_MS = 350;
 
   const ART_BASE = 'https://web.poecdn.com/image/Art/2DItems/';
   const iconUrl = (path) => `${ART_BASE}${path}.png`;
@@ -158,14 +168,18 @@
       #qf-bar .power-control-btn { border-radius: ${RADIUS}; }
       #qf-bar .power-control-btn:hover { background: rgba(255,255,255,.06); }
       #qf-bar .power-control-mirror:hover { filter: brightness(1.15); }
+      /* Anchored like the site's own .top-btn corner button and stacked one
+         gap above it. followCornerButton() keeps right/bottom in step; the
+         values here are only the fallback for when .top-btn is missing.
+         Deliberately no transition: we sample .top-btn's already-animating
+         position per frame, so easing it again would only add lag. */
       .qf-floating-actions {
-        position: fixed; bottom: 80px; right: 20px; z-index: 1000;
+        position: fixed; z-index: 500;
+        right: ${CORNER_GAP}px;
+        bottom: ${CORNER_GAP + CORNER_SIZE + CORNER_GAP}px;
         display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
       }
-      .qf-floating-actions .power-control-mirror {
-        padding: 8px 18px; font-size: 13px;
-        box-shadow: 0 2px 10px rgba(0,0,0,.5);
-      }
+      .qf-floating-actions .power-control-mirror:hover { filter: brightness(1.3); }
     `;
     (document.head || document.documentElement).appendChild(style);
   })();
@@ -331,6 +345,81 @@
         enableGroupFor(original);
       }
     });
+  }
+
+  // --- Live search lock ----------------------------------------------------
+
+  // A running live search keeps re-querying with the filters it started
+  // with, so editing them mid-run is misleading. Everything that changes
+  // the query gets disabled; Clear, Show/Hide Filters and the Live Search
+  // toggle itself stay usable so the run can be ended or reset.
+  let filtersLocked = false;
+  const lockables = [];
+
+  // `refresh` re-derives the element's final state. It is a callback rather
+  // than a plain element because some controls (the reset buttons) have
+  // their own enabled/disabled rule to combine with the lock.
+  function registerLockable(refresh) {
+    lockables.push(refresh);
+    refresh();
+  }
+
+  function setLockedState(element, locked) {
+    element.disabled = locked;
+    element.style.opacity = locked ? '0.4' : '';
+    element.style.pointerEvents = locked ? 'none' : '';
+  }
+
+  // For controls whose only disabled-reason is the lock.
+  function lockElement(element) {
+    registerLockable(() => setLockedState(element, filtersLocked));
+  }
+
+  function applyFilterLock(locked) {
+    if (locked === filtersLocked) return;
+    filtersLocked = locked;
+    if (DEBUG) console.log('[QF/lock] filters locked:', locked);
+    lockables.forEach(refresh => refresh());
+  }
+
+  // Heuristic: the site flags the running state on the Live Search button
+  // itself, either through a class or by relabelling it.
+  function isLiveSearchActive() {
+    const original = findSiteButton(SITE_BUTTONS.live);
+    if (!original) return false;
+
+    const childClasses = [...original.querySelectorAll('span')]
+      .map(span => span.className).join(' ');
+    const classes = `${original.className} ${childClasses}`;
+    return /\bactive\b|\brunning\b|live-active|\bconnected\b/i.test(classes) ||
+      /stop|deactivate|disconnect/i.test(captionOf(original));
+  }
+
+  function watchLiveSearchState() {
+    waitFor(() => findSiteButton(SITE_BUTTONS.live), (original) => {
+      // Logged on change only, so the heuristic above can be corrected
+      // against what the button actually looks like while running.
+      let lastSignature = null;
+      const update = () => {
+        if (DEBUG) {
+          const signature = `${original.className} | "${captionOf(original)}"`;
+          if (signature !== lastSignature) {
+            lastSignature = signature;
+            console.log('[QF/lock] live button signature:', signature);
+          }
+        }
+        applyFilterLock(isLiveSearchActive());
+      };
+      update();
+
+      const observer = new MutationObserver(update);
+      observer.observe(original, {
+        childList: true, subtree: true, characterData: true,
+        attributes: true, attributeFilter: ['class', 'style']
+      });
+      const timer = setInterval(update, POLL_MS);
+      registerDisposer(() => { observer.disconnect(); clearInterval(timer); });
+    }, 10000, 'live-search-button');
   }
 
   // vue-multiselect ignores direct value assignment. Filter its list, then
@@ -520,6 +609,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
 
       render();
       setTimeout(render, 500);
+      lockElement(button);
 
       // Pick up external changes: Clear button, URL load, original combobox
       watchMultiselect(multiselect, render);
@@ -591,7 +681,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     button.textContent = '×';
 
     const syncState = () => {
-      const active = entries.some(({ copy }) => copy.value !== '');
+      const active = !filtersLocked && entries.some(({ copy }) => copy.value !== '');
       button.disabled = !active;
       button.title = active ? `Reset ${label}` : '';
       button.style.opacity = active ? '1' : '0.35';
@@ -604,7 +694,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     });
 
     button.syncState = syncState;
-    syncState();
+    registerLockable(syncState);
     return button;
   }
 
@@ -631,6 +721,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     const entries = originals.map((original) => {
       const copy = createMirroredInput(original);
       const push = bindInput(copy, original, () => notifyClearState());
+      lockElement(copy);
       inputWrap.appendChild(copy);
       return { copy, push };
     });
@@ -675,6 +766,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       addFieldLabel(group, label);
 
       const select = document.createElement('select');
+      lockElement(select);
       group.appendChild(select);
 
       let rebuilding = false;
@@ -799,6 +891,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
           setTimeout(syncCurrency, 500);
         });
 
+        lockElement(button);
         currencyBox.appendChild(button);
         return { element: button, currency };
       });
@@ -815,7 +908,6 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
   const BUTTON_BORDER = '#4a3f2f';
   const BUTTON_ACTIVE_BG = '#3d5a3d';
   const BUTTON_ACTIVE_BORDER = '#6a9a5a';
-  const ICON_BUTTON_SIZE = 48;
 
   // Copies the original's colours. border-radius is deliberately not copied.
   function readSkin(original) {
@@ -851,24 +943,27 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
   }
 
   // `icon` turns the button into a square, caption-less variant that keeps
-  // the original's wording as its tooltip instead.
+  // the original's wording as its tooltip instead. `palette` pins its
+  // colours instead of deriving them from the original's active state.
   function addMirroredButton(slot, spec, fallbackCaption, options) {
-    const { useSkin, icon } = options || {};
+    const { useSkin, icon, palette } = options || {};
     const radius = icon ? '0' : RADIUS;
+    const baseBg = palette ? palette.bg : BUTTON_BG;
+    const baseBorder = palette ? palette.border : BUTTON_BORDER;
 
     waitFor(() => findSiteButton(spec), (original) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'power-control-mirror';
       button.style.cssText =
-        `cursor:pointer;border:1px solid ${BUTTON_BORDER};` +
-        `background:${BUTTON_BG};color:#e0d6c0;font-size:12px;` +
+        `cursor:pointer;border:1px solid ${baseBorder};` +
+        `background:${baseBg};color:#e0d6c0;font-size:12px;` +
         `border-radius:${radius};` +
         'white-space:nowrap;line-height:1.4;font-family:inherit;' +
         'transition:filter .12s;' +
         (icon
           ? 'display:inline-flex;align-items:center;justify-content:center;' +
-            `width:${ICON_BUTTON_SIZE}px;height:${ICON_BUTTON_SIZE}px;padding:0;`
+            `width:${CORNER_SIZE}px;height:${CORNER_SIZE}px;padding:0;`
           : 'padding:5px 14px;');
       if (icon) button.innerHTML = icon;
 
@@ -889,6 +984,8 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
           applySkin(button, skin, radius);
           return;
         }
+        // A pinned palette stays put; no active-state tinting.
+        if (palette) return;
 
         const addedClasses = original.className.replace(initialClasses, '').trim();
         const childClasses = [...original.querySelectorAll('span')]
@@ -901,6 +998,10 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       };
 
       sync();
+
+      // Re-running the search would only duplicate what the live search is
+      // already doing; Clear, Show/Hide Filters and Live Search stay usable.
+      if (spec === SITE_BUTTONS.search) lockElement(button);
 
       const observer = new MutationObserver(sync);
       observer.observe(original, {
@@ -927,8 +1028,90 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     }, 10000, `button:${fallbackCaption}`);
   }
 
-  // Extra Search button pinned to the bottom-right corner of the filter
-  // panel, so it stays reachable without scrolling back up.
+  // A third-party addon slides .top-btn sideways by injecting and removing
+  // a stylesheet, so there is no class or inline style of our own to key
+  // off: we have to read where the button actually ended up.
+  function followCornerButton(wrap) {
+    let watched = null;
+    let rafId = null;
+    let settleUntil = 0;
+
+    const observer = new MutationObserver(kick);
+
+    // The button can be re-created; move the watchers along with it.
+    function attach(topBtn) {
+      if (topBtn === watched) return;
+      observer.disconnect();
+      if (watched) {
+        watched.removeEventListener('transitionrun', kick);
+        watched.removeEventListener('transitionstart', kick);
+      }
+      watched = topBtn;
+      if (topBtn) {
+        observer.observe(topBtn, {
+          attributes: true, attributeFilter: ['style', 'class']
+        });
+        topBtn.addEventListener('transitionrun', kick);
+        topBtn.addEventListener('transitionstart', kick);
+      }
+    }
+
+    // Returns whether anything actually moved.
+    function place() {
+      const topBtn = document.querySelector(TOP_BUTTON_SELECTOR);
+      attach(topBtn);
+
+      // Fall back to .top-btn's own resting position if it is not there.
+      let right = CORNER_GAP;
+      let bottom = CORNER_GAP;
+      if (topBtn) {
+        const computed = getComputedStyle(topBtn);
+        right = parseFloat(computed.right) || CORNER_GAP;
+        bottom = parseFloat(computed.bottom) || CORNER_GAP;
+      }
+
+      // Stack on the constant height rather than the measured one, so we
+      // do not jump around while .top-btn is toggled out of view.
+      const nextRight = `${right}px`;
+      const nextBottom = `${bottom + CORNER_SIZE + CORNER_GAP}px`;
+      if (wrap.style.right === nextRight && wrap.style.bottom === nextBottom) {
+        return false;
+      }
+      wrap.style.right = nextRight;
+      wrap.style.bottom = nextBottom;
+      return true;
+    }
+
+    // getComputedStyle reports the interpolated value while .top-btn is
+    // mid-slide, so sampling once per frame rides its animation exactly.
+    // Reading only on the triggering event would catch the pre-animation
+    // value and leave us a full poll tick behind.
+    function track() {
+      rafId = null;
+      if (place()) settleUntil = performance.now() + CORNER_SETTLE_MS;
+      if (performance.now() < settleUntil) rafId = requestAnimationFrame(track);
+    }
+
+    function kick() {
+      settleUntil = performance.now() + CORNER_SETTLE_MS;
+      if (rafId === null) rafId = requestAnimationFrame(track);
+    }
+
+    place();
+    // Backstop: the addon toggles a stylesheet, which fires no mutation on
+    // .top-btn itself, so nothing above would notice that move.
+    const timer = setInterval(() => { if (place()) kick(); }, POLL_MS);
+
+    registerDisposer(() => {
+      clearInterval(timer);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      attach(null);
+      observer.disconnect();
+    });
+  }
+
+  // Extra Search button pinned to the bottom-right corner of the viewport,
+  // so it stays reachable without scrolling back up.
   function addFloatingActionBar() {
     waitFor(() => document.querySelector('.search-advanced-items'), (container) => {
       if (container.querySelector('.qf-floating-actions')) return;
@@ -938,7 +1121,8 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
       container.appendChild(wrap);
 
       addMirroredButton(wrap, SITE_BUTTONS.search, 'Search',
-        { useSkin: true, icon: SEARCH_ICON_SVG });
+        { icon: SEARCH_ICON_SVG, palette: CORNER_PALETTE });
+      followCornerButton(wrap);
     }, 20000, 'floating-actions-container');
   }
 
@@ -1063,6 +1247,9 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     const oldFloating = document.querySelector('.qf-floating-actions');
     if (oldFloating) oldFloating.remove();
     trackedOriginals.clear();
+    // The flag itself survives: a live search that is still running must
+    // keep the freshly mounted controls locked.
+    lockables.length = 0;
     activeUI = null;
   }
 
@@ -1090,6 +1277,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     addBuyoutMirror(price, { label: 'Buyout', filterTitle: 'Buyout Price' });
 
     addFloatingActionBar();
+    watchLiveSearchState();
 
     activeUI = { bar, controls };
     if (DEBUG) console.log('[QF/tab] mount complete, activeUI set:', activeUI);
