@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PoE Trade Quick Filters
 // @namespace    poe-trade-qf
-// @version      5.2
+// @version      5.3-BETA
 // @description  Compact mirror bar for the PoE trade search filters
 // @match        https://www.pathofexile.com/trade/search/*
 // @grant        none
@@ -57,12 +57,26 @@
     { label: 'iLvl',    filterTitle: 'Item Level' },
     { label: 'Gem Lvl', filterTitle: 'Gem Level' },
     { label: 'Quality',    filterTitle: 'Quality' },
-    { label: 'Strands', filterTitle: 'Memory Strands' },
-    { label: 'Intangibility', filterTitle: 'Intangibility' }
+    { label: 'Strands', filterTitle: 'Memory Strands' }
   ];
 
-  const DROPDOWN_FILTERS = [
-    { label: 'Rarity',   filterTitle: 'Item Rarity' }
+  // Nothing uses the generic dropdown mirror right now; Item Rarity moved to
+  // the button strip below. Kept so another combobox filter can be added.
+  const DROPDOWN_FILTERS = [];
+
+  // Item Rarity shortcuts. `option` must match the original text exactly.
+  // The tints come from the site's own item-colour custom properties
+  // (--color-game-normal-item and friends), so they read as in-game. The
+  // exception is unique: at its true rgb(175, 96, 37) it is far darker than
+  // the other three and vanishes beside them, so the chip uses a lightened
+  // version of the same hue.
+  const RARITIES = [
+    { label: 'N', option: 'Normal',         rgb: '200, 200, 200' },
+    { label: 'M', option: 'Magic',          rgb: '136, 136, 255' },
+    { label: 'R', option: 'Rare',           rgb: '255, 255, 119' },
+    { label: 'U', option: 'Unique',         rgb: '222, 138, 62' },
+    // A struck-through U: everything that is not unique.
+    { label: 'U', option: 'Any Non-Unique', rgb: '222, 138, 62', struck: true }
   ];
 
   // Buyout currency shortcuts. `option` must match the original text exactly.
@@ -166,6 +180,45 @@
         background: #2b2519; border-color: #6b5f47; color: #e8d9b5;
       }
       #qf-bar .qf-cur-btn.is-active img { filter: none; opacity: 1; }
+      /* Rarity strip: same frame as the currency one, but each button is
+         tinted with its item colour instead of carrying an icon. The tints
+         themselves are applied inline, since they vary per button. */
+      #qf-bar .qf-rar-btn {
+        position: relative;
+        display: inline-flex; align-items: center; justify-content: center;
+        height: 22px; min-width: 26px; padding: 0 7px;
+        border: 1px solid transparent; border-radius: 3px;
+        font-size: 11px; font-weight: 700; font-family: inherit;
+        letter-spacing: .5px; line-height: 1; cursor: pointer;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, .85);
+        transition: background .12s, border-color .12s, color .12s,
+                    box-shadow .12s, transform .12s;
+      }
+      #qf-bar .qf-rar-btn:hover { filter: brightness(1.3); transform: translateY(-1px); }
+      #qf-bar .qf-rar-btn:active { transform: translateY(0); }
+      /* A drawn bar rather than text-decoration: at this size line-through
+         renders as a hairline and is easy to miss. currentColor keeps it in
+         step with the button's own idle/picked colour. */
+      #qf-bar .qf-rar-btn.is-struck::after {
+        content: ''; position: absolute; left: 12%; right: 12%; top: 50%;
+        height: 2.5px; margin-top: -1.25px; border-radius: 2px;
+        background: currentColor;
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, .7);
+        pointer-events: none;
+      }
+      #qf-bar .qf-rar-sep {
+        flex: 0 0 auto; width: 1px; height: 15px; margin: 0 3px;
+        background: #3b3428;
+      }
+      #qf-bar .qf-rar-clear {
+        min-width: 22px; padding: 0 5px; font-size: 13px;
+        background: linear-gradient(180deg, rgba(150, 40, 32, .3), rgba(150, 40, 32, .1));
+        border-color: rgba(217, 80, 63, .35);
+        color: #d9503f;
+      }
+      #qf-bar .qf-rar-clear:hover {
+        background: #c0392b; border-color: #e0705f; color: #fff; filter: none;
+      }
       #qf-bar .power-control-btn { border-radius: ${RADIUS}; }
       #qf-bar .power-control-btn:hover { background: rgba(255,255,255,.06); }
       #qf-bar .power-control-mirror:hover { filter: brightness(1.15); }
@@ -487,6 +540,27 @@
     [...multiselect.querySelectorAll('.multiselect__option')]
       .map(option => option.textContent.trim())
       .filter(text => text && !/no elements found/i.test(text));
+
+  // Resolves `wanted` (lower case) to the option's exact original spelling.
+  // vue-multiselect renders its options lazily, so focusing the input first
+  // forces the list into the DOM when the plain lookup comes up empty.
+  function findOptionText(multiselect, wanted) {
+    let texts = optionTexts(multiselect);
+    let match = texts.find(text => text.toLowerCase() === wanted);
+    if (match) return match;
+
+    const input = multiselect.querySelector('.multiselect__input');
+    if (input) {
+      input.focus({ preventScroll: true });
+      texts = optionTexts(multiselect);
+      match = texts.find(text => text.toLowerCase() === wanted);
+      input.blur();
+    }
+    if (!match) {
+      console.warn('[QF] option not found:', wanted, '- available:', texts);
+    }
+    return match || null;
+  }
 
   // --- Icons ---------------------------------------------------------------
 
@@ -820,6 +894,109 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     });
   }
 
+  // Tinted at low alpha when idle, lit up when picked. The gradient plus the
+  // inner top highlight give the chips some depth; the picked one gets a
+  // halo in its own item colour, echoing the tristate icons' glow.
+  function setRarityLook(button, rgb, active) {
+    button.classList.toggle('is-active', active);
+    if (active) {
+      button.style.background =
+        `linear-gradient(180deg, rgba(${rgb}, .45), rgba(${rgb}, .18))`;
+      button.style.borderColor = `rgba(${rgb}, .9)`;
+      button.style.color = `rgb(${rgb})`;
+      button.style.boxShadow =
+        `0 0 7px rgba(${rgb}, .45), inset 0 1px 0 rgba(255, 255, 255, .18)`;
+      return;
+    }
+    button.style.background =
+      `linear-gradient(180deg, rgba(${rgb}, .16), rgba(${rgb}, .05))`;
+    button.style.borderColor = `rgba(${rgb}, .28)`;
+    button.style.color = `rgba(${rgb}, .72)`;
+    button.style.boxShadow = 'inset 0 1px 0 rgba(255, 255, 255, .06)';
+  }
+
+  // Item Rarity as a strip of tinted letter buttons instead of a combobox,
+  // closed off by the same × the other filters use for clearing.
+  function addRarityMirror(slot, config) {
+    const { label, filterTitle } = config;
+
+    const box = document.createElement('span');
+    box.className = 'qf-cur';
+    slot.appendChild(box);
+
+    waitForMultiselectFilter(filterTitle, (filter) => {
+      const multiselect = filter.querySelector('.multiselect');
+      if (DEBUG) console.log('[QF] rarity filter ready:', filterTitle);
+
+      // Picking a rarity means selecting its option; releasing it means
+      // going back to "Any", whether that comes from the × or from clicking
+      // the picked chip again.
+      function choose(optionText) {
+        const match = findOptionText(multiselect, optionText.toLowerCase());
+        if (!match) return;
+        selectOption(multiselect, match);
+        setTimeout(syncRarity, 150);
+        setTimeout(syncRarity, 500);
+      }
+
+      const isPicked = (rarity) =>
+        readSelected(multiselect).trim().toLowerCase() === rarity.option.toLowerCase();
+
+      function syncRarity() {
+        const current = readSelected(multiselect).trim().toLowerCase();
+        buttons.forEach(({ element, rarity }) => {
+          setRarityLook(element, rarity.rgb, current === rarity.option.toLowerCase());
+        });
+        box.title = `${label}: ${readSelected(multiselect)}`;
+        syncClear();
+      }
+
+      const buttons = RARITIES.map((rarity) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = rarity.struck ? 'qf-rar-btn is-struck' : 'qf-rar-btn';
+        button.textContent = rarity.label;
+        button.title = rarity.option;
+        setRarityLook(button, rarity.rgb, false);
+
+        // Clicking the picked chip again releases it, on top of the × below.
+        button.addEventListener('click', () => {
+          choose(isPicked(rarity) ? 'Any' : rarity.option);
+        });
+
+        lockElement(button);
+        box.appendChild(button);
+        return { element: button, rarity };
+      });
+
+      const separator = document.createElement('span');
+      separator.className = 'qf-rar-sep';
+      box.appendChild(separator);
+
+      // Same semantics as the range filters' × : greyed out when there is
+      // nothing to clear, and while a live search holds the filters.
+      const clearButton = document.createElement('button');
+      clearButton.type = 'button';
+      clearButton.className = 'qf-rar-btn qf-rar-clear';
+      clearButton.textContent = '×';
+      clearButton.addEventListener('click', () => choose('Any'));
+      box.appendChild(clearButton);
+
+      function syncClear() {
+        const active = !filtersLocked && readSelected(multiselect) !== 'Any';
+        clearButton.disabled = !active;
+        clearButton.title = active ? `Reset ${label}` : '';
+        clearButton.style.opacity = active ? '1' : '0.35';
+        clearButton.style.pointerEvents = active ? 'auto' : 'none';
+      }
+      registerLockable(syncClear);
+
+      syncRarity();
+      setTimeout(syncRarity, 600);
+      watchMultiselect(multiselect, syncRarity);
+    });
+  }
+
   // Buyout Price: min/max fields plus currency shortcut buttons
   function addBuyoutMirror(slot, config) {
     const { label, filterTitle } = config;
@@ -849,26 +1026,6 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
         currencyBox.title = `${label}: ${readSelected(multiselect)}`;
       }
 
-      // vue-multiselect renders its options lazily; focusing the input
-      // forces the list into the DOM so we can match against it.
-      function findOptionText(wanted) {
-        let texts = optionTexts(multiselect);
-        let match = texts.find(text => text.toLowerCase() === wanted);
-        if (match) return match;
-
-        const input = multiselect.querySelector('.multiselect__input');
-        if (input) {
-          input.focus({ preventScroll: true });
-          texts = optionTexts(multiselect);
-          match = texts.find(text => text.toLowerCase() === wanted);
-          input.blur();
-        }
-        if (!match) {
-          console.warn('[QF] currency option not found:', wanted, '- available:', texts);
-        }
-        return match || null;
-      }
-
       const currencyButtons = CURRENCIES.map((currency) => {
         const button = document.createElement('button');
         button.type = 'button';
@@ -885,7 +1042,7 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
         }
 
         button.addEventListener('click', () => {
-          const match = findOptionText(currency.option.toLowerCase());
+          const match = findOptionText(multiselect, currency.option.toLowerCase());
           if (!match) return;
           selectOption(multiselect, match);
           setTimeout(syncCurrency, 150);
@@ -1271,6 +1428,8 @@ ${banned ? `<span style="position:absolute;inset:0;">${banSvg(size)}</span>` : '
     addMirroredButton(right, SITE_BUTTONS.clear, 'Clear', {});
     addMirroredButton(right, SITE_BUTTONS.filters, 'Show Filters', {});
     addMirroredButton(right, SITE_BUTTONS.search, 'Search', { useSkin: true });
+
+    addRarityMirror(fields, { label: 'Rarity', filterTitle: 'Item Rarity' });
 
     DROPDOWN_FILTERS.forEach(config => addDropdownMirror(fields, config));
     RANGE_FILTERS.forEach(config => addRangeMirror(fields, config));
